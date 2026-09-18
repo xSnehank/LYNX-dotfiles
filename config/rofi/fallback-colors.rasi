@@ -1,0 +1,26 @@
+/* LYNX :: fallback palette (rofi)
+ *
+ * The same color contract as config/waybar/fallback-colors.css, in rofi's
+ * syntax: same roles, same values. Change one, change the other.
+ *
+ * One spelling difference, forced by rofi: rasi property names can't contain
+ * underscores (rofi's lexer allows only letters, digits and '-'). So the role
+ * matugen calls `on_surface` is written `on-surface` here.
+ *
+ * lynx.rasi loads this file first, then ?imports the generated palette from
+ * ~/.cache/lynx/colors.rasi. In rasi, the last value parsed wins, so the
+ * generated colors replace these whenever that file exists, and these stay
+ * in effect when it doesn't.
+ */
+
+* {
+    surface:            #1e1e2e;  /* window background            */
+    surface-container:  #313244;  /* search box background        */
+    on-surface:         #cdd6f4;  /* normal text                  */
+    on-surface-variant: #a6adc8;  /* placeholder / dimmed text    */
+    outline:            #45475a;  /* window border                */
+    primary:            #89b4fa;  /* selected entry, prompt       */
+    on-primary:         #1e1e2e;  /* text on the selected entry   */
+    tertiary:           #f9e2af;  /* "active" entries             */
+    error:              #f38ba8;  /* "urgent" entries             */
+}

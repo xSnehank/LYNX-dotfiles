@@ -1,0 +1,28 @@
+/* ~/.config/rofi/config.rasi
+ *
+ * ╔════════════════════════════════════════════════════════════════════════╗
+ * ║  THIS FILE IS YOURS.                                                   ║
+ * ║  LYNX created it once and will never touch it again.                   ║
+ * ╚════════════════════════════════════════════════════════════════════════╝
+ *
+ * This import is the only link between you and LYNX. rofi expands ~ in import
+ * paths; if you moved the repo, fix the path.
+ */
+
+@import "~/dotfiles/lynx/config/rofi/lynx.rasi"
+
+/* ─── Your overrides ─────────────────────────────────────────────────────
+ *
+ * Everything below the import wins, because rasi keeps the last value it
+ * parses. Options go in `configuration { }`, looks go in widget sections.
+ * Use palette names instead of hex (@primary, @surface, @on-surface, ...) so
+ * your changes follow the wallpaper once theming lands. For example:
+ *
+ *   configuration            { icon-theme: "Adwaita"; }
+ *   window                   { width: 800px; }
+ *   listview                 { lines: 12; }
+ *   element selected.normal  { background-color: @tertiary; }
+ *
+ * No restart needed: rofi reads its config fresh every time it opens.
+ * If something looks wrong, rofi's warnings are in ~/.cache/lynx/rofi.log
+ */

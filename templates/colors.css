@@ -1,0 +1,16 @@
+/* LYNX :: generated palette (GTK3: Waybar)
+ *
+ * Rendered by matugen from your wallpaper (lx theme reload). Don't edit this
+ * file: it's replaced every time the colors change. What each role is for is
+ * explained in config/waybar/fallback-colors.css.
+ */
+
+@define-color surface            {{colors.surface.default.hex}};
+@define-color surface_container  {{colors.surface_container.default.hex}};
+@define-color on_surface         {{colors.on_surface.default.hex}};
+@define-color on_surface_variant {{colors.on_surface_variant.default.hex}};
+@define-color outline            {{colors.outline.default.hex}};
+@define-color primary            {{colors.primary.default.hex}};
+@define-color on_primary         {{colors.on_primary.default.hex}};
+@define-color tertiary           {{colors.tertiary.default.hex}};
+@define-color error              {{colors.error.default.hex}};

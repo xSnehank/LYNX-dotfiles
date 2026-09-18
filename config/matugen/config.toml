@@ -1,0 +1,58 @@
+# LYNX :: matugen config
+# https://github.com/InioX/matugen
+#
+# LYNX-owned. `lx theme reload` runs, roughly:
+#
+#   matugen image <wallpaper> --config <this file> --mode <dark|light> \
+#           --type <scheme> --source-color-index 0
+#
+# Every template renders into a STAGING folder, never straight into place.
+# `lx` checks that each rendered file is complete, and only then moves them into
+# ~/.cache/lynx. A broken render can't reach Waybar, the lock screen, or
+# anything else: you simply keep the previous colors.
+#
+# Template paths below are relative to this file. matugen expands "~" in
+# output paths.
+
+[config]
+version_check = false
+
+# Off, so a stored result can never be reused for a different mode or scheme.
+caching = false
+
+# Never ask which color to use. When an image has several candidate colors
+# and nothing says which to pick, matugen asks interactively -- a keybind or a
+# background job has nobody to answer. 0 = the most dominant color. lx passes
+# this on the command line too; setting it here makes running matugen by hand
+# behave the same way.
+source_color_index = 0
+
+# Used as the source color if an image has no usable color at all.
+# It's LYNX's fallback accent (primary).
+fallback_color = "#89b4fa"
+
+# ─── One template per program ───────────────────────────────────────────────
+
+[templates.waybar]
+input_path = "../../templates/colors.css"
+output_path = "~/.cache/lynx/theme/staging/colors.css"
+
+[templates.rofi]
+input_path = "../../templates/colors.rasi"
+output_path = "~/.cache/lynx/theme/staging/colors.rasi"
+
+[templates.swaync]
+input_path = "../../templates/colors-gtk4.css"
+output_path = "~/.cache/lynx/theme/staging/colors-gtk4.css"
+
+[templates.hyprlock]
+input_path = "../../templates/colors-hyprlock.conf"
+output_path = "~/.cache/lynx/theme/staging/colors-hyprlock.conf"
+
+[templates.kitty]
+input_path = "../../templates/colors-kitty.conf"
+output_path = "~/.cache/lynx/theme/staging/colors-kitty.conf"
+
+[templates.hyprland]
+input_path = "../../templates/colors.lua"
+output_path = "~/.cache/lynx/theme/staging/colors.lua"

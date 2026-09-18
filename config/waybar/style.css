@@ -1,0 +1,150 @@
+/* LYNX :: Waybar core stylesheet
+ *
+ * LYNX-owned: `git pull` overwrites this file. Put your changes in
+ * ~/.config/waybar/style.css instead. That file imports the palette and then
+ * this file, so any rule you write there comes later and wins whenever the
+ * selectors are equally specific.
+ *
+ * THERE ARE NO HEX COLORS IN THIS FILE. Every color is a named @color from
+ * the palette (see config/waybar/fallback-colors.css for the full list).
+ *
+ * This is GTK3 CSS, not browser CSS. The big differences you'll hit:
+ *   - alpha(@color, 0.8), shade(@color, 1.2) and mix(@a, @b, 0.5) are GTK color functions
+ *   - no flexbox or grid; layout comes from the bar config, not from here
+ *   - the GTK theme styles buttons, which is why `button` gets reset below
+ */
+
+/* ─── Base ─────────────────────────────────────────────────────────────── */
+
+* {
+    font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
+    font-size: 13px;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+}
+
+window#waybar {
+    background: alpha(@surface, 0.85);
+    color: @on_surface;
+    border-radius: 12px;
+}
+
+tooltip {
+    background: @surface;
+    border: 1px solid @outline;
+    border-radius: 8px;
+}
+
+tooltip label {
+    color: @on_surface;
+}
+
+/* ─── Module "pills" ───────────────────────────────────────────────────── */
+/* The window title is deliberately left out: when no window is focused
+ * it's empty, and an empty pill looks like a rendering bug. */
+
+#workspaces,
+#clock,
+#tray,
+#wireplumber,
+#network,
+#battery,
+#custom-notification,
+#custom-power {
+    background: @surface_container;
+    border-radius: 8px;
+    padding: 0 10px;
+    margin: 5px 0;
+}
+
+#window {
+    color: @on_surface_variant;
+    padding: 0 10px;
+}
+
+/* ─── Workspaces ───────────────────────────────────────────────────────── */
+
+#workspaces {
+    padding: 0 3px;
+}
+
+/* Reset whatever the GTK theme does to buttons first, or you inherit its
+ * gradients, shadows and hover effects on top of ours. */
+#workspaces button {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    text-shadow: none;
+    color: @on_surface_variant;
+    padding: 0 8px;
+    margin: 3px 0;
+    border-radius: 6px;
+}
+
+#workspaces button:hover {
+    background: alpha(@primary, 0.25);
+    color: @on_surface;
+}
+
+#workspaces button.active {
+    background: @primary;
+    color: @on_primary;
+}
+
+#workspaces button.urgent {
+    background: @error;
+    color: @surface;
+}
+
+/* ─── Status ───────────────────────────────────────────────────────────── */
+
+#wireplumber.muted {
+    color: @on_surface_variant;
+}
+
+#network.disconnected,
+#network.disabled {
+    color: @error;
+}
+
+#battery.warning:not(.charging) {
+    color: @tertiary;
+}
+
+#battery.critical:not(.charging) {
+    color: @error;
+}
+
+/* ─── Notifications (swaync) ────────────────────────────────────────────── */
+/* The state classes come from swaync-client (src/client.vala). */
+
+#custom-notification.notification,
+#custom-notification.inhibited-notification {
+    color: @primary;
+}
+
+#custom-notification.dnd-none,
+#custom-notification.dnd-notification,
+#custom-notification.dnd-inhibited-none,
+#custom-notification.dnd-inhibited-notification {
+    color: @on_surface_variant;
+}
+
+/* While the notification panel is open. */
+#custom-notification.cc-open {
+    background: @primary;
+    color: @on_primary;
+}
+
+/* ─── Power button ───────────────────────────────────────────────────────── */
+
+#custom-power {
+    color: @error;
+    padding: 0 12px;
+}
+
+#custom-power:hover {
+    background: @error;
+    color: @surface;
+}

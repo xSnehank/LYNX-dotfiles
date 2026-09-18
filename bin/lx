@@ -1,0 +1,1271 @@
+#!/bin/sh
+# LYNX :: lx
+#
+# The one command the rest of LYNX calls. Plain POSIX sh that reads top to
+# bottom. From Arch's `base` it uses coreutils, grep, gawk, sed, findutils,
+# procps-ng (pgrep/pkill/uptime), util-linux (setsid) and systemd. Individual
+# commands also use the programs their build piece installs (waybar, rofi,
+# swaync, hyprpaper, hyprlock, imagemagick, playerctl, git, curl, matugen, grim,
+# slurp, cliphist, hyprshutdown, satty) and say so
+# plainly when one is missing.
+#
+# Later build pieces add subcommands HERE instead of scattering one-off
+# scripts around the repo.
+#
+# Hyprland calls this as `sh .../bin/lx ...` rather than executing it directly.
+# That way a missing executable bit (easy to lose via git on Windows, or a
+# careless copy) can never break your session.
+
+set -eu
+
+LYNX_DIR="${LYNX_DIR:-$HOME/dotfiles/lynx}"
+# Always ~/.cache/lynx, deliberately not $XDG_CACHE_HOME: the configs that
+# read palettes and wallpaper state name this path directly, and some of them
+# (Waybar's stylesheet imports, matugen's output paths) can't expand
+# environment variables. One fixed location keeps every program in agreement.
+CACHE_DIR="$HOME/.cache/lynx"
+
+WALL_DIR="${LYNX_WALLPAPER_DIR:-$HOME/Pictures/Wallpapers}"
+WALL_STATE="$CACHE_DIR/wallpaper"
+THUMB_DIR="$CACHE_DIR/thumbs"
+DEFAULT_WALLPAPER="$LYNX_DIR/assets/wallpapers/lynx-default.png"
+
+THEME_DIR="$CACHE_DIR/theme"
+THEME_STAGING="$THEME_DIR/staging"
+MATUGEN_CONFIG="$LYNX_DIR/config/matugen/config.toml"
+
+die() {
+    printf 'lx: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+usage: lx <command>
+
+  lx service start UNIT   start a systemd user service once the session is ready
+
+  lx bar start            start Waybar, unless it's already running
+  lx bar stop             stop Waybar
+  lx bar restart          stop, then start (after editing bar config)
+  lx bar toggle           hide / show the bar without restarting it
+
+  lx launcher apps        open the app launcher; run again to close it
+  lx launcher windows     open the window switcher; run again to close it
+
+  lx notify panel         open / close the notification panel
+  lx notify dnd           toggle Do Not Disturb
+  lx notify reload        re-read swaync's config.json and style.css
+
+  lx wallpaper start      start hyprpaper, showing the last wallpaper you set
+  lx wallpaper set FILE   show FILE
+  lx wallpaper random     show a random wallpaper from ~/Pictures/Wallpapers
+  lx wallpaper pick       choose a wallpaper, with thumbnails
+  lx wallpaper fetch      download or update the Caelestia + ML4W wallpapers
+  lx wallpaper thumbs     build missing thumbnails (pick does this by itself)
+
+  lx lock                 lock the screen (does nothing if already locked)
+  lx lock idle            lock with a 5-second grace period (used by hypridle)
+  lx lock info PANEL      print one lock screen panel: weather, fetch, media,
+                          media-button, resources, notifications
+
+  lx theme reload         recolor everything from the current wallpaper
+  lx theme mode MODE      dark, light or toggle (remembered)
+  lx theme scheme NAME    color style: tonal-spot (default), vibrant, expressive,
+                          neutral, monochrome, fidelity, content, rainbow,
+                          fruit-salad (remembered)
+  lx theme reset          back to LYNX's fixed fallback palette
+  lx theme status         what the current colors are based on
+  lx theme ensure         put fallback palettes where files are missing (login)
+
+  lx screenshot region    drag a rectangle; saved and copied (Escape cancels)
+  lx screenshot screen    the focused monitor; saved and copied
+  lx screenshot window    the focused window; saved and copied
+
+  lx clipboard start      start recording clipboard history (login)
+  lx clipboard pick       choose an earlier copy to paste again
+  lx clipboard wipe       forget all clipboard history (asks first)
+
+  lx power menu           lock, suspend, log out, restart, shut down
+USAGE
+}
+
+# For commands run from a keybind: there's no terminal to print to, so also
+# say it with a notification.
+say() {
+    printf 'lx: %s\n' "$*" >&2
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a LYNX "LYNX" "$*" >/dev/null 2>&1 || true
+    fi
+}
+
+# require COMMAND PACKAGE: stop with a visible message if COMMAND is missing.
+require() {
+    command -v "$1" >/dev/null 2>&1 && return 0
+    say "$1 isn't installed. Install it with: sudo pacman -S $2"
+    exit 1
+}
+
+# Ask a yes/no question in rofi. Succeeds only if the first answer was chosen.
+# The highlighted row starts on "Cancel", so pressing Enter out of habit never
+# restarts or shuts anything down.
+confirm() {
+    question=$1
+    yes=$2
+    mkdir -p "$CACHE_DIR"
+    answer=$(printf '%s\n%s\n' "$yes" "Cancel" |
+        rofi -dmenu -i -no-custom -p "$question" -selected-row 1 \
+            -theme-str 'window { width: 360px; } listview { lines: 2; }' 2>>"$CACHE_DIR/rofi.log") || return 1
+    [ "$answer" = "$yes" ]
+}
+
+# Escape text for Pango markup, which hyprlock renders. A song called
+# "Rock & Roll" would otherwise break the whole label.
+esc() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# ─── Session services ──────────────────────────────────────────────────────
+# Hyprland copies WAYLAND_DISPLAY into the systemd user environment when it
+# starts (Compositor.cpp, startCompositor), but it does that in a background
+# process. A service started at the same moment could run before that copy
+# finishes. The units LYNX starts (hyprpolkitagent, swaync, hypridle) declare
+# ConditionEnvironment=WAYLAND_DISPLAY, and systemd silently SKIPS a unit
+# whose condition fails. For the polkit agent, that would mean no password
+# prompts for the whole session, with no error anywhere.
+#
+# So: wait until systemd has the same WAYLAND_DISPLAY this shell inherited from
+# Hyprland (comparing the value means a stale one left over from a previous
+# session doesn't count), then start the unit.
+wait_for_session_env() {
+    [ -n "${WAYLAND_DISPLAY:-}" ] || die "not running inside a Wayland session"
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if systemctl --user show-environment 2>/dev/null | grep -qx "WAYLAND_DISPLAY=$WAYLAND_DISPLAY"; then
+            return 0
+        fi
+        sleep 0.1
+        i=$((i + 1))
+    done
+    die "WAYLAND_DISPLAY didn't reach the systemd user environment within 5s"
+}
+
+service_start() {
+    [ -n "${1:-}" ] || die "usage: lx service start UNIT"
+    wait_for_session_env
+    systemctl --user start "$1"
+}
+
+# ─── Theme ─────────────────────────────────────────────────────────────────
+# Colors follow the wallpaper. matugen renders one palette file per program
+# into a staging folder; lx checks every file; only then are they moved into
+# ~/.cache/lynx, and running programs are told to reload. If anything goes
+# wrong along the way, the previous colors stay exactly as they were.
+
+# The palette roles every generated file must define. Same names as the
+# fallback palettes shipped in config/*/fallback-colors.*.
+THEME_ROLES="surface surface_container on_surface on_surface_variant outline primary on_primary tertiary error"
+
+# Everything matugen generates.
+THEME_OUTPUTS="colors.css colors.rasi colors-gtk4.css colors-hyprlock.conf colors-kitty.conf colors.lua"
+
+# Each cached palette file, and the fallback it starts out as.
+# (Hyprland's colors.lua has no fallback file: without it, looks.lua uses the
+# colors in settings.lua.)
+theme_fallbacks() {
+    cat <<EOF
+colors.css $LYNX_DIR/config/waybar/fallback-colors.css
+colors.rasi $LYNX_DIR/config/rofi/fallback-colors.rasi
+colors-gtk4.css $LYNX_DIR/config/swaync/fallback-colors.css
+colors-hyprlock.conf $LYNX_DIR/config/hyprlock/fallback-colors.conf
+colors-kitty.conf $LYNX_DIR/config/kitty/fallback-colors.conf
+EOF
+}
+
+# Copy, then rename: rename is atomic, so no program ever reads half a file.
+install_file() {
+    cp "$1" "$2.lx-tmp" && mv -f "$2.lx-tmp" "$2"
+}
+
+# Put a fallback palette in place for every file that's missing or empty.
+# Waybar exits if its stylesheet @imports a missing file; kitty and the lock
+# screen would log errors. Runs at login, and before the bar or lock starts.
+theme_ensure() {
+    mkdir -p "$CACHE_DIR"
+    theme_fallbacks | while read -r name fallback; do
+        [ -s "$CACHE_DIR/$name" ] || install_file "$fallback" "$CACHE_DIR/$name"
+    done
+}
+
+theme_enabled() {
+    # Set from s.theme in settings.lua (config/hypr/env.lua exports it).
+    [ "${LYNX_THEME:-on}" != off ]
+}
+
+# Mode and scheme are remembered in the cache. Anything unexpected in those
+# files falls back to the defaults.
+theme_mode() {
+    case "$(cat "$THEME_DIR/mode" 2>/dev/null || true)" in
+        light) echo light ;;
+        *) echo dark ;;
+    esac
+}
+
+theme_scheme() {
+    saved=$(cat "$THEME_DIR/scheme" 2>/dev/null || true)
+    case "$saved" in
+        scheme-content | scheme-expressive | scheme-fidelity | scheme-fruit-salad | scheme-monochrome | \
+        scheme-neutral | scheme-rainbow | scheme-tonal-spot | scheme-vibrant) echo "$saved" ;;
+        *) echo scheme-tonal-spot ;;
+    esac
+}
+
+# Theme runs in the background, so problems go to a log and, when possible,
+# a notification you'll actually see.
+theme_notify() {
+    mkdir -p "$THEME_DIR"
+    printf '%s  %s\n' "$(date '+%F %T')" "$*" >>"$THEME_DIR/theme.log"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a LYNX "Theme" "$*" >/dev/null 2>&1 || true
+    fi
+}
+
+# Is a freshly rendered file complete? Each format spells the role names its
+# own way, and every role must be present with a value of the right shape.
+theme_validate() {
+    file=$1
+    [ -s "$file" ] || return 1
+    hex='#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?'
+    dollar='\$'
+    case "$file" in
+        */colors.css)
+            for r in $THEME_ROLES; do
+                grep -Eq "^@define-color[[:space:]]+$r[[:space:]]+$hex;" "$file" || return 1
+            done ;;
+        */colors.rasi)
+            for r in $THEME_ROLES; do
+                name=$(printf '%s' "$r" | tr _ -)   # rasi names can't contain "_"
+                grep -Eq "^[[:space:]]*$name:[[:space:]]*$hex;" "$file" || return 1
+            done ;;
+        */colors-gtk4.css)
+            for r in $THEME_ROLES; do
+                grep -Eq "^[[:space:]]*--$r:[[:space:]]*$hex;" "$file" || return 1
+            done ;;
+        */colors-hyprlock.conf)
+            for r in $THEME_ROLES; do
+                grep -Eq "^$dollar$r[[:space:]]*=[[:space:]]*[0-9]{1,3},[[:space:]]*[0-9]{1,3},[[:space:]]*[0-9]{1,3}[[:space:]]*$" "$file" || return 1
+            done ;;
+        */colors-kitty.conf)
+            for k in foreground background selection_foreground selection_background cursor cursor_text_color \
+                     color0 color1 color2 color3 color4 color5 color6 color7 \
+                     color8 color9 color10 color11 color12 color13 color14 color15; do
+                grep -Eq "^$k[[:space:]]+$hex[[:space:]]*$" "$file" || return 1
+            done ;;
+        */colors.lua)
+            grep -q '^return {' "$file" &&
+                grep -Eq 'active_border[[:space:]]*=.*"rgba\([0-9a-fA-F]{8}\)"' "$file" &&
+                grep -Eq 'inactive_border[[:space:]]*=[[:space:]]*"rgba\([0-9a-fA-F]{8}\)"' "$file" &&
+                grep -Eq 'shadow[[:space:]]*=[[:space:]]*0x[0-9a-fA-F]{8}' "$file" || return 1 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Tell running programs to pick up the new palette. rofi and the lock screen
+# need nothing: they read their colors every time they open.
+theme_apply_live() {
+    # SIGUSR2 = Waybar reloads its config and stylesheet, without restarting.
+    if pgrep -x waybar >/dev/null 2>&1; then pkill -USR2 -x waybar || true; fi
+    if command -v swaync-client >/dev/null 2>&1; then swaync-client -rs -sw >/dev/null 2>&1 || true; fi
+    # SIGUSR1 = every kitty window reloads its config.
+    if pgrep -x kitty >/dev/null 2>&1; then pkill -USR1 -x kitty || true; fi
+    # Window borders: Hyprland re-runs its config, and looks.lua reads colors.lua.
+    if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then hyprctl reload >/dev/null 2>&1 || true; fi
+}
+
+# One full attempt: render, check, install, reload. Returns non-zero (and
+# notifies) on any failure, having changed nothing.
+theme_generate() {
+    src=$(readlink -f "$WALL_STATE/current" 2>/dev/null || true)
+    if [ ! -f "$src" ]; then
+        theme_notify "No wallpaper to take colors from yet."
+        return 1
+    fi
+    mode=$(theme_mode)
+    scheme=$(theme_scheme)
+
+    rm -rf "$THEME_STAGING"
+    mkdir -p "$THEME_STAGING"
+
+    # --source-color-index 0 and </dev/null: matugen must never stop to ask
+    # which color to use (see config/matugen/config.toml).
+    if ! matugen image "$src" --config "$MATUGEN_CONFIG" --mode "$mode" --type "$scheme" \
+        --source-color-index 0 --quiet </dev/null >"$THEME_DIR/matugen.log" 2>&1; then
+        theme_notify "matugen failed, so the colors weren't changed. Details: $THEME_DIR/matugen.log"
+        return 1
+    fi
+
+    for f in $THEME_OUTPUTS; do
+        if ! theme_validate "$THEME_STAGING/$f"; then
+            theme_notify "The generated $f was incomplete, so the colors weren't changed. It's kept for inspection in $THEME_STAGING."
+            return 1
+        fi
+    done
+
+    # Everything checked out. Each move is atomic.
+    for f in $THEME_OUTPUTS; do
+        mv -f "$THEME_STAGING/$f" "$CACHE_DIR/$f"
+    done
+    printf '%s\n' "$src" >"$THEME_DIR/source"
+    theme_apply_live
+
+    # Your own matugen templates, if you have a config at the default location,
+    # get the same colors. Their output files are yours: not staged or checked.
+    if [ -f "$HOME/.config/matugen/config.toml" ]; then
+        matugen image "$src" --mode "$mode" --type "$scheme" --source-color-index 0 --quiet \
+            </dev/null >"$THEME_DIR/matugen-user.log" 2>&1 ||
+            theme_notify "Your own matugen config failed. Details: $THEME_DIR/matugen-user.log"
+    fi
+}
+
+theme_reload() {
+    theme_enabled || die "theming is off (s.theme = false in settings.lua)"
+    command -v matugen >/dev/null 2>&1 || die "matugen is not installed"
+    mkdir -p "$THEME_DIR"
+
+    # One run at a time: mkdir is atomic, so it doubles as a lock. A request
+    # that arrives mid-run is remembered, and the running instance goes round
+    # again, so quick wallpaper changes always end on the last wallpaper. A
+    # lock older than 5 minutes is left over from a crash; clear it.
+    find "$THEME_DIR" -maxdepth 1 -name .running -mmin +5 -exec rmdir {} \; 2>/dev/null || true
+    if ! mkdir "$THEME_DIR/.running" 2>/dev/null; then
+        touch "$THEME_DIR/.again"
+        return 0
+    fi
+    trap 'rmdir "$THEME_DIR/.running" 2>/dev/null' EXIT INT TERM
+
+    status=0
+    while :; do
+        rm -f "$THEME_DIR/.again"
+        theme_generate || status=1
+        [ -e "$THEME_DIR/.again" ] || break
+    done
+    return "$status"
+}
+
+theme_set_mode() {
+    case "${1:-}" in
+        dark | light) new=$1 ;;
+        toggle) if [ "$(theme_mode)" = dark ]; then new=light; else new=dark; fi ;;
+        *) die "usage: lx theme mode dark|light|toggle" ;;
+    esac
+    mkdir -p "$THEME_DIR"
+    printf '%s\n' "$new" >"$THEME_DIR/mode"
+    theme_reload
+}
+
+theme_set_scheme() {
+    name=${1:-}
+    case "$name" in
+        scheme-*) ;;
+        ?*) name="scheme-$name" ;;
+    esac
+    case "$name" in
+        scheme-content | scheme-expressive | scheme-fidelity | scheme-fruit-salad | scheme-monochrome | \
+        scheme-neutral | scheme-rainbow | scheme-tonal-spot | scheme-vibrant) ;;
+        *) die "usage: lx theme scheme tonal-spot|vibrant|expressive|neutral|monochrome|fidelity|content|rainbow|fruit-salad" ;;
+    esac
+    mkdir -p "$THEME_DIR"
+    printf '%s\n' "$name" >"$THEME_DIR/scheme"
+    theme_reload
+}
+
+# Back to the fixed fallback palette everywhere. Useful after s.theme = false.
+theme_reset() {
+    mkdir -p "$CACHE_DIR"
+    theme_fallbacks | while read -r name fallback; do
+        install_file "$fallback" "$CACHE_DIR/$name"
+    done
+    rm -f "$CACHE_DIR/colors.lua" "$THEME_DIR/source"
+    theme_apply_live
+}
+
+theme_status() {
+    if theme_enabled; then echo "theming   on"; else echo "theming   off (s.theme = false)"; fi
+    echo "mode      $(theme_mode)"
+    echo "scheme    $(theme_scheme)"
+    if [ -s "$THEME_DIR/source" ]; then
+        echo "colors    from $(cat "$THEME_DIR/source")"
+    else
+        echo "colors    LYNX fallback palette"
+    fi
+    if [ -s "$THEME_DIR/theme.log" ]; then
+        echo "last note $(tail -n 1 "$THEME_DIR/theme.log")"
+    fi
+}
+
+# ─── Bar ───────────────────────────────────────────────────────────────────
+bar_running() {
+    pgrep -x waybar >/dev/null 2>&1
+}
+
+bar_start() {
+    command -v waybar >/dev/null 2>&1 || die "waybar is not installed"
+    theme_ensure
+
+    if bar_running; then
+        echo "lx: waybar is already running"
+        return 0
+    fi
+
+    # setsid -f detaches the bar completely, so it doesn't die with whatever
+    # launched it (a terminal, a keybind). Its output goes to a log for when
+    # it misbehaves:   less ~/.cache/lynx/waybar.log
+    setsid -f waybar >"$CACHE_DIR/waybar.log" 2>&1
+}
+
+bar_stop() {
+    bar_running || return 0
+    pkill -x waybar || true
+
+    # Wait up to 2s for it to actually exit, so `restart` can never end up
+    # with two bars stacked on top of each other.
+    i=0
+    while bar_running && [ "$i" -lt 20 ]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+    if bar_running; then
+        die "waybar did not exit within 2s"
+    fi
+}
+
+bar_toggle() {
+    bar_running || die "waybar is not running (try: lx bar start)"
+    # SIGUSR1 = toggle visibility; that's Waybar's default `on-sigusr1` action.
+    pkill -USR1 -x waybar
+}
+
+# ─── Launcher ──────────────────────────────────────────────────────────────
+# rofi finds ~/.config/rofi/config.rasi by itself, so there's nothing to pass.
+#
+# $1 is a rofi mode: drun (apps) or window (open windows).
+launcher_toggle() {
+    command -v rofi >/dev/null 2>&1 || die "rofi is not installed"
+
+    # Pressing the launcher key while rofi is already open closes it, instead
+    # of stacking a second one. (rofi's own -replace flag reopens rather than
+    # closes, which isn't what a toggle key should do.)
+    if pgrep -x rofi >/dev/null 2>&1; then
+        pkill -x rofi || true
+        return 0
+    fi
+
+    mkdir -p "$CACHE_DIR"
+    # exec replaces this shell with rofi, so no idle `sh` is left waiting.
+    # rofi prints theme warnings (e.g. a file it couldn't import) on stderr:
+    #   less ~/.cache/lynx/rofi.log
+    exec rofi -show "$1" 2>"$CACHE_DIR/rofi.log"
+}
+
+# ─── Notifications ─────────────────────────────────────────────────────────
+# swaync runs as a systemd user service (started at login, and restarted by
+# systemd if it ever crashes), so these only talk to it through swaync-client.
+#
+# -sw ("skip wait") makes swaync-client give up immediately if swaync isn't
+# running, instead of hanging a keybind until it appears.
+notify_client() {
+    command -v swaync-client >/dev/null 2>&1 || die "swaync is not installed"
+    swaync-client "$@" -sw
+}
+
+# ─── Wallpaper ─────────────────────────────────────────────────────────────
+# State lives in ~/.cache/lynx/wallpaper:
+#   current   symlink to the wallpaper you chose (hyprpaper.conf shows this)
+#   lock.jpg  a resized copy for the lock screen
+#
+# Formats listed are the ones hyprpaper shows. The ML4W collection's single
+# GIF is skipped.
+list_wallpapers() {
+    [ -d "$WALL_DIR" ] || return 0
+    find "$WALL_DIR" -type f -not -path '*/.git/*' \
+        \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.jxl' \) |
+        sort
+}
+
+# Where a wallpaper's thumbnail lives: named by a hash of its path, so two
+# files with the same name in different folders don't collide.
+thumb_path() {
+    printf '%s/%s.jpg' "$THUMB_DIR" "$(printf '%s' "$1" | md5sum | cut -c1-32)"
+}
+
+wallpaper_start() {
+    command -v hyprpaper >/dev/null 2>&1 || die "hyprpaper is not installed"
+    mkdir -p "$WALL_STATE"
+
+    # First run, or the file `current` pointed to has been deleted
+    # (-e follows the symlink): fall back to LYNX's own default.
+    if [ ! -e "$WALL_STATE/current" ]; then
+        ln -sfn "$DEFAULT_WALLPAPER" "$WALL_STATE/current"
+        make_lock_image "$DEFAULT_WALLPAPER"
+    fi
+
+    if pgrep -x hyprpaper >/dev/null 2>&1; then
+        echo "lx: hyprpaper is already running"
+        return 0
+    fi
+
+    # Not hyprpaper's systemd unit: it requires graphical-session.target, which
+    # a Hyprland started from a TTY never activates.
+    setsid -f hyprpaper >"$CACHE_DIR/hyprpaper.log" 2>&1
+}
+
+wallpaper_set() {
+    src=${1:-}
+    [ -n "$src" ] || die "usage: lx wallpaper set FILE"
+    [ -f "$src" ] || die "no such file: $src"
+    case "$src" in
+        *.[jJ][pP][gG] | *.[jJ][pP][eE][gG] | *.[pP][nN][gG] | *.[wW][eE][bB][pP] | *.[jJ][xX][lL]) ;;
+        *) die "hyprpaper can't show this format: $src" ;;
+    esac
+    # hyprctl splits its "monitor,path,fit" argument on commas.
+    case "$src" in
+        *,*) die "file names containing a comma can't be passed to hyprpaper: $src" ;;
+    esac
+    src=$(realpath "$src")
+
+    mkdir -p "$WALL_STATE"
+    ln -sfn "$src" "$WALL_STATE/current"
+
+    if pgrep -x hyprpaper >/dev/null 2>&1; then
+        # Empty monitor = every monitor.
+        hyprctl hyprpaper wallpaper ",$src,cover" >/dev/null
+    else
+        wallpaper_start
+    fi
+
+    # The lock screen's copy is made in the background: shrinking an 8K PNG
+    # takes a moment, and switching wallpaper shouldn't wait for it.
+    setsid -f sh "$0" wallpaper lock-image "$src" >/dev/null 2>&1
+
+    # Recolor everything from the new wallpaper, also in the background.
+    if theme_enabled && command -v matugen >/dev/null 2>&1; then
+        setsid -f sh "$0" theme reload >/dev/null 2>&1
+    fi
+}
+
+# hyprlock reads png, jpg and webp. Give it one reasonably small jpg, so the
+# lock screen never decodes a huge image while locking.
+make_lock_image() {
+    src=${1:-}
+    [ -f "$src" ] || die "no such file: $src"
+    mkdir -p "$WALL_STATE"
+    out="$WALL_STATE/lock.jpg"
+    tmp="$WALL_STATE/.lock-tmp.jpg"
+
+    if command -v magick >/dev/null 2>&1; then
+        # [0] = first frame only. "2560x2560>" = shrink to fit 2560px, never enlarge.
+        if magick "${src}[0]" -resize '2560x2560>' -quality 88 "$tmp" 2>/dev/null; then
+            mv -f "$tmp" "$out"   # rename is atomic: hyprlock never sees half a file
+            return 0
+        fi
+        rm -f "$tmp"
+    fi
+
+    # No imagemagick, or it failed. hyprlock can still use a jpg as it is;
+    # for anything else the lock screen shows the plain palette color.
+    case "$src" in
+        *.[jJ][pP][gG] | *.[jJ][pP][eE][gG]) ln -sfn "$src" "$out" ;;
+        *) rm -f "$out" ;;
+    esac
+}
+
+wallpaper_random() {
+    current=$(readlink -f "$WALL_STATE/current" 2>/dev/null || true)
+    pick=$(list_wallpapers | grep -vxF "$current" | shuf -n 1 || true)
+    [ -n "$pick" ] || die "no wallpapers in $WALL_DIR yet (try: lx wallpaper fetch)"
+    wallpaper_set "$pick"
+}
+
+# A grid of thumbnails in rofi. rofi's dmenu mode reads one entry per line;
+# "\0icon\037PATH" after the text attaches an image to that entry.
+PICKER_THEME='window { width: 70%; } listview { columns: 4; lines: 3; fixed-height: true; } element { orientation: vertical; padding: 10px; } element-icon { size: 180px; } element-text { horizontal-align: 0.5; }'
+
+wallpaper_pick() {
+    command -v rofi >/dev/null 2>&1 || die "rofi is not installed"
+
+    if pgrep -x rofi >/dev/null 2>&1; then
+        pkill -x rofi || true
+        return 0
+    fi
+
+    list=$(list_wallpapers)
+    [ -n "$list" ] || die "no wallpapers in $WALL_DIR yet (try: lx wallpaper fetch)"
+    mkdir -p "$CACHE_DIR"
+
+    # Build any missing thumbnails in the background. Entries without one show
+    # just their name this time, and have a picture next time.
+    setsid -f sh "$0" wallpaper thumbs >/dev/null 2>&1
+
+    choice=$(printf '%s\n' "$list" | while IFS= read -r f; do
+        name=${f#"$WALL_DIR"/}
+        thumb=$(thumb_path "$f")
+        if [ -f "$thumb" ]; then
+            printf '%s\0icon\037%s\n' "$name" "$thumb"
+        else
+            printf '%s\n' "$name"
+        fi
+    done | rofi -dmenu -i -show-icons -p Wallpaper -theme-str "$PICKER_THEME" 2>>"$CACHE_DIR/rofi.log") || return 0
+
+    [ -n "$choice" ] && wallpaper_set "$WALL_DIR/$choice"
+}
+
+wallpaper_thumbs() {
+    command -v magick >/dev/null 2>&1 || die "imagemagick is not installed, so there are no thumbnails"
+    mkdir -p "$THUMB_DIR"
+
+    # Only one thumbnail run at a time: mkdir is atomic, so it doubles as a
+    # lock. A lock older than 10 minutes is left over from a crash; clear it.
+    find "$THUMB_DIR" -maxdepth 1 -name .running -mmin +10 -exec rmdir {} \; 2>/dev/null || true
+    mkdir "$THUMB_DIR/.running" 2>/dev/null || return 0
+    trap 'rmdir "$THUMB_DIR/.running" 2>/dev/null' EXIT INT TERM
+
+    list_wallpapers | while IFS= read -r f; do
+        thumb=$(thumb_path "$f")
+        [ -f "$thumb" ] && continue
+        # Square crop from the center, 360px: sharp at the picker's 180px size
+        # on a 2x-scaled screen.
+        if magick "${f}[0]" -thumbnail '360x360^' -gravity center -extent 360x360 -quality 82 "$thumb.tmp.jpg" 2>/dev/null; then
+            mv -f "$thumb.tmp.jpg" "$thumb"
+        else
+            rm -f "$thumb.tmp.jpg"
+        fi
+    done
+}
+
+# Shallow clone, or a shallow update if it's already there.
+fetch_git_repo() {
+    url=$1
+    dir=$2
+    if [ -d "$dir/.git" ]; then
+        git -C "$dir" pull --depth=1 --ff-only
+    else
+        git clone --depth=1 "$url" "$dir"
+    fi
+}
+
+# Only one folder out of a big repo. --filter=blob:none + --sparse means git
+# downloads nothing but the files inside that folder.
+fetch_git_folder() {
+    url=$1
+    dir=$2
+    folder=$3
+    if [ -d "$dir/.git" ]; then
+        git -C "$dir" pull --depth=1 --ff-only
+    else
+        git clone --depth=1 --filter=blob:none --sparse "$url" "$dir" &&
+            git -C "$dir" sparse-checkout set "$folder"
+    fi
+}
+
+wallpaper_fetch() {
+    command -v git >/dev/null 2>&1 || die "git is not installed"
+    command -v curl >/dev/null 2>&1 || die "curl is not installed"
+    mkdir -p "$WALL_DIR"
+
+    echo "lx: downloading wallpapers into $WALL_DIR"
+    echo "lx: about 840 MB the first time; later runs only fetch what changed."
+    echo "lx: these are third-party images for your own desktop: keep this folder out of public repos."
+    failed=""
+
+    echo
+    echo "lx: [1/3] Caelestia: its one wallpaper (~6 MB)"
+    mkdir -p "$WALL_DIR/caelestia"
+    part="$WALL_DIR/caelestia/.wallpaper.webp.part"
+    if curl -fL --retry 3 -o "$part" "https://raw.githubusercontent.com/caelestia-dots/shell/main/assets/wallpaper.webp"; then
+        mv -f "$part" "$WALL_DIR/caelestia/wallpaper.webp"
+    else
+        rm -f "$part"
+        failed="$failed Caelestia"
+    fi
+
+    echo
+    echo "lx: [2/3] ML4W collection: 220 images (~790 MB)"
+    fetch_git_repo "https://github.com/mylinuxforwork/wallpaper.git" "$WALL_DIR/ml4w" || failed="$failed ML4W-collection"
+
+    echo
+    echo "lx: [3/3] ML4W dotfiles defaults: 13 images (~44 MB)"
+    fetch_git_folder "https://github.com/mylinuxforwork/dotfiles.git" "$WALL_DIR/ml4w-defaults" \
+        "dotfiles/.config/ml4w/wallpapers" || failed="$failed ML4W-defaults"
+
+    echo
+    echo "lx: $(list_wallpapers | wc -l) wallpapers available. Pick one with SUPER + W."
+    setsid -f sh "$0" wallpaper thumbs >/dev/null 2>&1 || true
+    [ -z "$failed" ] || die "these downloads failed:$failed (run lx wallpaper fetch again to retry)"
+}
+
+# ─── Screenshots ───────────────────────────────────────────────────────────
+# Every screenshot is saved to a file AND copied to the clipboard: ready to
+# paste straight away, and still there later.
+
+screenshot_dir() {
+    if [ -n "${LYNX_SCREENSHOT_DIR:-}" ]; then
+        echo "$LYNX_SCREENSHOT_DIR"
+        return 0
+    fi
+    pictures=""
+    if command -v xdg-user-dir >/dev/null 2>&1; then
+        pictures=$(xdg-user-dir PICTURES 2>/dev/null || true)
+    fi
+    # xdg-user-dir answers with $HOME itself when no Pictures folder is set.
+    if [ -z "$pictures" ] || [ "$pictures" = "$HOME" ]; then
+        pictures="$HOME/Pictures"
+    fi
+    echo "$pictures/Screenshots"
+}
+
+# One color from the current palette, as #rrggbb (so slurp's selection
+# rectangle matches the theme).
+palette_color() {
+    theme_ensure
+    sed -n "s/^@define-color[[:space:]]*$1[[:space:]]*\(#[0-9a-fA-F]\{6\}\).*/\1/p" "$CACHE_DIR/colors.css" | head -n 1
+}
+
+screenshot_take() {
+    mode=$1
+    require grim grim
+    require wl-copy wl-clipboard
+
+    dir=$(screenshot_dir)
+    mkdir -p "$dir"
+    stamp=$(date '+%Y-%m-%d_%H-%M-%S')
+    file="$dir/$stamp.png"
+    n=2
+    while [ -e "$file" ]; do   # two screenshots in the same second
+        file="$dir/$stamp-$n.png"
+        n=$((n + 1))
+    done
+
+    case "$mode" in
+        region)
+            require slurp slurp
+            accent=$(palette_color primary)
+            accent=${accent:-#89b4fa}
+            # slurp prints nothing if you press Escape or click without dragging.
+            geometry=$(slurp -d -w 2 -c "${accent}ff" -s "${accent}22" -b '#00000066' \
+                -F 'JetBrainsMono Nerd Font' 2>/dev/null || true)
+            [ -n "$geometry" ] || return 0
+            grim -g "$geometry" "$file"
+            ;;
+        screen)
+            # hyprctl's JSON lists each monitor with its fields indented four
+            # spaces; nested objects (like its workspace) are indented further.
+            output=$(hyprctl monitors -j 2>/dev/null | awk '
+                /^    "name": "/ { name = $0; sub(/^    "name": "/, "", name); sub(/",?$/, "", name) }
+                /^    "focused": true/ { print name; exit }')
+            if [ -n "$output" ]; then
+                grim -o "$output" "$file"
+            else
+                grim "$file"
+            fi
+            ;;
+        window)
+            geometry=$(hyprctl activewindow -j 2>/dev/null | awk '
+                /^    "at": \[/   { v = $0; gsub(/[^0-9,-]/, "", v); split(v, a, ","); x = a[1]; y = a[2] }
+                /^    "size": \[/ { v = $0; gsub(/[^0-9,-]/, "", v); split(v, s, ","); w = s[1]; h = s[2] }
+                END { if (w > 0 && h > 0) printf "%d,%d %dx%d", x, y, w, h }')
+            if [ -z "$geometry" ]; then
+                say "No focused window to take a screenshot of."
+                exit 1
+            fi
+            grim -g "$geometry" "$file"
+            ;;
+    esac
+
+    wl-copy --type image/png <"$file"
+    setsid -f sh "$0" screenshot notify "$file" >/dev/null 2>&1 || true
+}
+
+# Runs in the background: a notification with a preview. If satty is
+# installed, it has an Edit button that opens the screenshot for annotating.
+screenshot_notify() {
+    file=${1:-}
+    [ -f "$file" ] || exit 0
+    command -v notify-send >/dev/null 2>&1 || exit 0
+    name=$(basename "$file")
+
+    if ! command -v satty >/dev/null 2>&1; then
+        notify-send -a LYNX -i "$file" "Screenshot saved" "Copied to the clipboard · $name" >/dev/null 2>&1 || true
+        exit 0
+    fi
+
+    # --action waits until the notification is clicked or dismissed, and
+    # prints the chosen action's name.
+    action=$(notify-send -a LYNX -i "$file" -A edit=Edit \
+        "Screenshot saved" "Copied to the clipboard · $name" 2>/dev/null || true)
+    if [ "$action" = edit ]; then
+        # Enter copies the annotated version; Ctrl+S saves it next to the
+        # original with "-edited" added, so the original is never overwritten.
+        exec satty --filename "$file" --output-filename "${file%.png}-edited.png" \
+            --copy-command wl-copy --actions-on-enter save-to-clipboard \
+            --actions-on-escape exit --early-exit
+    fi
+}
+
+# ─── Clipboard history ─────────────────────────────────────────────────────
+# Two watchers record every copy: one for text, one for images. cliphist keeps
+# the most recent 750 (its default) in ~/.cache/cliphist/db.
+#
+# Passwords: when an app marks a copy as secret (the
+# x-kde-passwordManagerHint type), wl-paste tells cliphist it's "sensitive",
+# and cliphist doesn't store it. KeePassXC does this. Plenty of apps don't;
+# a password copied from a browser page is recorded like anything else.
+
+clipboard_watching() {
+    pgrep -f "wl-paste --type $1 --watch cliphist store" >/dev/null 2>&1
+}
+
+clipboard_start() {
+    require cliphist cliphist
+    require wl-paste wl-clipboard
+    mkdir -p "$CACHE_DIR"
+    for kind in text image; do
+        clipboard_watching "$kind" && continue
+        setsid -f wl-paste --type "$kind" --watch cliphist store >>"$CACHE_DIR/cliphist.log" 2>&1
+    done
+}
+
+clipboard_pick() {
+    require cliphist cliphist
+    require rofi rofi
+    require wl-copy wl-clipboard
+
+    if pgrep -x rofi >/dev/null 2>&1; then
+        pkill -x rofi || true
+        return 0
+    fi
+    mkdir -p "$CACHE_DIR"
+
+    # rofi exits 0 for Enter, 1 for Escape, and 10 for kb-custom-1 (Alt+D).
+    # Alt+D because Shift+Delete, the obvious choice, is already bound inside
+    # rofi to deleting history entries.
+    status=0
+    entry=$(cliphist list | rofi -dmenu -i -no-custom -p Clipboard \
+        -mesg 'Enter: copy again  ·  Alt+D: delete' -kb-custom-1 'Alt+d' \
+        2>>"$CACHE_DIR/rofi.log") || status=$?
+
+    [ -n "$entry" ] || return 0
+    case "$status" in
+        0)
+            printf '%s\n' "$entry" | cliphist decode | wl-copy
+            ;;
+        10)
+            printf '%s\n' "$entry" | cliphist delete
+            exec sh "$0" clipboard pick   # back to the list
+            ;;
+    esac
+}
+
+clipboard_wipe() {
+    require cliphist cliphist
+    if [ "${1:-}" != --yes ]; then
+        require rofi rofi
+        confirm "Forget all clipboard history?" "Forget everything" || return 0
+    fi
+    cliphist wipe
+    say "Clipboard history cleared."
+}
+
+# ─── Power menu ────────────────────────────────────────────────────────────
+power_menu() {
+    require rofi rofi
+
+    if pgrep -x rofi >/dev/null 2>&1; then
+        pkill -x rofi || true
+        return 0
+    fi
+    mkdir -p "$CACHE_DIR"
+
+    choice=$(printf '%s\n' \
+        "󰌾  Lock" \
+        "󰤄  Suspend" \
+        "󰍃  Log out" \
+        "󰜉  Restart" \
+        "󰐥  Shut down" |
+        rofi -dmenu -i -no-custom -p Power \
+            -theme-str 'window { width: 320px; } listview { lines: 5; }' \
+            2>>"$CACHE_DIR/rofi.log") || return 0
+
+    # Suspend locks first on its own: hypridle locks before the machine sleeps.
+    case "$choice" in
+        *"  Lock")      exec sh "$0" lock ;;
+        *"  Suspend")   exec systemctl suspend ;;
+        *"  Log out")   confirm "Log out?" "Log out" && session_end logout ;;
+        *"  Restart")   confirm "Restart?" "Restart" && session_end reboot ;;
+        *"  Shut down") confirm "Shut down?" "Shut down" && session_end poweroff ;;
+    esac
+    return 0
+}
+
+# Ending the session. With hyprshutdown, apps are closed gracefully first
+# (so they don't just die mid-save), then Hyprland exits, then the machine
+# restarts or powers off. Without it, apps are killed along with the session.
+session_end() {
+    case "$1" in
+        logout)   label="Logging out";   after="" ;;
+        reboot)   label="Restarting";    after="systemctl reboot" ;;
+        poweroff) label="Shutting down"; after="systemctl poweroff" ;;
+    esac
+
+    if command -v hyprshutdown >/dev/null 2>&1; then
+        if [ -n "$after" ]; then
+            exec hyprshutdown --top-label "$label…" --post-cmd "$after"
+        fi
+        exec hyprshutdown --top-label "$label…"
+    fi
+
+    if [ -n "$after" ]; then
+        exec $after   # unquoted on purpose: "systemctl reboot" is two words
+    fi
+    exec hyprctl dispatch 'hl.dsp.exit()'
+}
+
+# ─── Lock screen ───────────────────────────────────────────────────────────
+lock_start() {
+    command -v hyprlock >/dev/null 2>&1 || die "hyprlock is not installed"
+
+    # A lock screen is already up: nothing to do. This is what makes the lock
+    # key safe to press while locked, and repeated lock requests harmless.
+    if pgrep -x hyprlock >/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p "$CACHE_DIR"
+
+    # hyprlock.conf sources the generated palette; make sure that file exists.
+    theme_ensure
+
+    # The side panels go on the monitor you were using.
+    monitor=$(hyprctl activeworkspace -j 2>/dev/null | sed -n 's/.*"monitor": *"\([^"]*\)".*/\1/p' | head -n 1 || true)
+    printf '# Written by lx each time it locks. Safe to delete.\n$lx_monitor = %s\n' "$monitor" \
+        >"$CACHE_DIR/lock-session.conf"
+
+    if [ "${1:-}" = idle ]; then
+        # Idle lock: moving the mouse within 5 seconds cancels it.
+        exec hyprlock --grace 5 >"$CACHE_DIR/hyprlock.log" 2>&1
+    fi
+    exec hyprlock >"$CACHE_DIR/hyprlock.log" 2>&1
+}
+
+# ─── Lock screen panels ────────────────────────────────────────────────────
+# hyprlock runs these every few seconds and waits for each one to exit. So
+# every panel must answer FAST and must never block on the network.
+
+weather_cache() {
+    # One cache per location, so changing the location doesn't show old weather.
+    printf '%s/weather-%s.txt' "$CACHE_DIR" "$(printf '%s' "$1" | md5sum | cut -c1-12)"
+}
+
+info_weather() {
+    location=$1
+    mkdir -p "$CACHE_DIR"
+    cache=$(weather_cache "$location")
+
+    age=999999
+    if [ -f "$cache" ]; then
+        age=$(($(date +%s) - $(stat -c %Y "$cache")))
+    fi
+
+    # Older than 30 minutes: refresh in the background, for next time. At most
+    # one attempt every 5 minutes, so being offline doesn't pile up curls.
+    if [ "$age" -gt 1800 ] && [ -z "$(find "$CACHE_DIR" -maxdepth 1 -name .weather-trying -mmin -5 2>/dev/null)" ]; then
+        touch "$CACHE_DIR/.weather-trying"
+        setsid -f sh "$0" lock weather-refresh "$location" >/dev/null 2>&1 || true
+    fi
+
+    # Show the cache unless it's more than 6 hours old; then it's misleading.
+    if [ -s "$cache" ] && [ "$age" -lt 21600 ]; then
+        cat "$cache"
+    else
+        printf '󰖕  <b>Weather</b>\nNot available yet\n'
+    fi
+}
+
+weather_refresh() {
+    location=$1
+    command -v curl >/dev/null 2>&1 || return 0
+    # The cache folder can be missing if this runs on its own, or if the cache
+    # was cleared while the lock screen was up.
+    mkdir -p "$CACHE_DIR"
+    cache=$(weather_cache "$location")
+    query=$(printf '%s' "$location" | sed 's/ /+/g')
+
+    # wttr.in one-line format, fields split by "|":
+    #   %c condition icon  %t temperature  %C condition  %f feels like
+    #   %h humidity        %w wind         %l location
+    # ?m = metric units.
+    raw=$(curl -fsS --max-time 8 "https://wttr.in/${query}?m&format=%c|%t|%C|%f|%h|%w|%l") || return 0
+
+    # Not the format we asked for (wttr.in sometimes answers with an error page).
+    case "$raw" in
+        *'|'*'|'*'|'*'|'*'|'*'|'*) ;;
+        *) return 0 ;;
+    esac
+
+    printf '%s\n' "$raw" | awk -F'|' '{
+        for (i = 1; i <= NF; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+        sub(/^\+/, "", $2); sub(/^\+/, "", $4)
+        printf "%s  %s  %s\nFeels like %s\nHumidity %s  Wind %s\n%s\n", $1, $2, $3, $4, $5, $6, $7
+    }' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' >"$cache.tmp" && mv -f "$cache.tmp" "$cache"
+}
+
+battery_line() {
+    for bat in /sys/class/power_supply/BAT*; do
+        [ -r "$bat/capacity" ] || continue
+        capacity=$(cat "$bat/capacity")
+        status=$(cat "$bat/status" 2>/dev/null || echo Unknown)
+        if [ "$status" = Charging ]; then
+            printf 'BATT %s%% (charging)\n' "$capacity"
+        else
+            printf 'BATT %s%%\n' "$capacity"
+        fi
+        return 0
+    done
+}
+
+info_fetch() {
+    os=$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-${NAME:-Linux}}") || os=Linux
+    wm=$(hyprctl version 2>/dev/null | awk 'NR == 1 { print $1, $2; exit }') || wm=""
+    up=$(uptime -p 2>/dev/null | sed 's/^up //') || up=""
+
+    printf '<b>&gt; lynxfetch</b>\n'
+    printf 'OS   %s\n' "$(esc "$os")"
+    printf 'WM   %s\n' "$(esc "${wm:-Hyprland}")"
+    printf 'USER %s\n' "$(esc "$(id -un)")"
+    printf 'UP   %s\n' "$(esc "${up:-unknown}")"
+    battery_line || true
+}
+
+# Shorten to N characters. gawk counts characters, not bytes, so a title with
+# non-Latin characters is never cut in the middle of one (that would break
+# Pango's rendering of the whole label).
+shorten() {
+    printf '%s\n' "$2" | awk -v n="$1" '{ if (length($0) > n) print substr($0, 1, n - 1) "…"; else print }'
+}
+
+info_media() {
+    if ! command -v playerctl >/dev/null 2>&1; then
+        printf '󰝚  <b>Media</b>\nInstall playerctl for this panel\n'
+        return 0
+    fi
+    title=$(playerctl metadata title 2>/dev/null || true)
+    artist=$(playerctl metadata artist 2>/dev/null || true)
+    if [ -z "$title" ]; then
+        printf '󰝚  <b>Nothing playing</b>\n\n'
+        return 0
+    fi
+    printf '󰝚  <b>%s</b>\n%s\n' "$(esc "$(shorten 30 "$title")")" "$(esc "$(shorten 34 "$artist")")"
+}
+
+info_media_button() {
+    if [ "$(playerctl status 2>/dev/null || true)" = Playing ]; then
+        printf '󰏤\n'
+    else
+        printf '󰐊\n'
+    fi
+}
+
+# A whole number from 0 to 100, whatever a parser handed back. A panel
+# showing "201121372%" is worse than one showing 0%.
+percent() {
+    case "${1:-}" in
+        '' | *[!0-9]*) echo 0 ;;
+        *) if [ "$1" -gt 100 ]; then echo 100; else echo "$1"; fi ;;
+    esac
+}
+
+# A 10-segment bar for a percentage.
+bar() {
+    awk -v p="$1" 'BEGIN { n = int((p + 5) / 10); if (n > 10) n = 10; s = ""; for (i = 0; i < 10; i++) s = s (i < n ? "▰" : "▱"); print s }'
+}
+
+cpu_temp() {
+    # A CPU sensor driver if there is one...
+    for hwmon in /sys/class/hwmon/hwmon*; do
+        [ -r "$hwmon/name" ] && [ -r "$hwmon/temp1_input" ] || continue
+        case "$(cat "$hwmon/name")" in
+            coretemp | k10temp | zenpower | cpu_thermal)
+                echo $(($(cat "$hwmon/temp1_input") / 1000))
+                return 0
+                ;;
+        esac
+    done
+    # ...otherwise the Intel package thermal zone.
+    for zone in /sys/class/thermal/thermal_zone*; do
+        if [ "$(cat "$zone/type" 2>/dev/null)" = x86_pkg_temp ]; then
+            echo $(($(cat "$zone/temp") / 1000))
+            return 0
+        fi
+    done
+}
+
+info_resources() {
+    cpu=0
+    if [ -r /proc/stat ]; then
+        # CPU load = share of time not idle, between two samples 0.3 s apart.
+        # Fields: cpu user nice system idle iowait irq softirq steal ...
+        read -r _ u1 n1 s1 i1 w1 x1 y1 z1 _ </proc/stat
+        sleep 0.3
+        read -r _ u2 n2 s2 i2 w2 x2 y2 z2 _ </proc/stat
+        busy=$(((u2 + n2 + s2 + x2 + y2 + z2) - (u1 + n1 + s1 + x1 + y1 + z1)))
+        total=$((busy + (i2 + w2) - (i1 + w1)))
+        [ "$total" -gt 0 ] && cpu=$((100 * busy / total))
+    fi
+
+    # Memory in use = total minus what the kernel reports as available.
+    # Without MemAvailable (very old kernels), estimate it as free + buffers + cache.
+    mem=$(awk '
+        /^MemTotal:/     { t = $2 }
+        /^MemAvailable:/ { a = $2; have = 1 }
+        /^MemFree:/      { f = $2 }
+        /^Buffers:/      { b = $2 }
+        /^Cached:/       { c = $2 }
+        END { if (!have) a = f + b + c; if (t > 0) printf "%d", 100 * (t - a) / t; else print 0 }
+    ' /proc/meminfo 2>/dev/null) || mem=0
+
+    # Take the use% column counting from the END of the line: the filesystem
+    # name at the start can contain spaces (network shares, some FUSE mounts),
+    # which would shift every column counted from the front.
+    disk=$(df -P / 2>/dev/null | awk 'NR == 2 { v = $(NF - 1); sub(/%/, "", v); print v }') || disk=0
+
+    cpu=$(percent "$cpu")
+    mem=$(percent "$mem")
+    disk=$(percent "$disk")
+
+    temp=$(cpu_temp || true)
+    temp_part=""
+    [ -n "$temp" ] && temp_part="  󰔏 ${temp}°C"
+
+    printf '<b>Resources</b>\n'
+    printf '󰻠  CPU  %s %3d%%%s\n' "$(bar "$cpu")" "$cpu" "$temp_part"
+    printf '󰍛  RAM  %s %3d%%\n' "$(bar "${mem:-0}")" "${mem:-0}"
+    printf '󰋊  DISK %s %3d%%\n' "$(bar "${disk:-0}")" "${disk:-0}"
+}
+
+info_notifications() {
+    count=""
+    if command -v swaync-client >/dev/null 2>&1; then
+        count=$(swaync-client -c -sw 2>/dev/null || true)
+    fi
+    case "$count" in
+        '' | *[!0-9]*) printf '󰂜  <b>Notifications</b>\nUnavailable\n' ;;
+        0) printf '󰂜  <b>Notifications</b>\nNothing new\n' ;;
+        1) printf '󰂜  <b>1 notification</b>\nUnlock to read it\n' ;;
+        *) printf '󰂜  <b>%s notifications</b>\nUnlock to read them\n' "$count" ;;
+    esac
+}
+
+lock_info() {
+    case "${1:-}" in
+        weather) info_weather "${2:-}" ;;
+        fetch) info_fetch ;;
+        media) info_media ;;
+        media-button) info_media_button ;;
+        resources) info_resources ;;
+        notifications) info_notifications ;;
+        *) die "usage: lx lock info weather|fetch|media|media-button|resources|notifications" ;;
+    esac
+}
+
+# ─── Dispatch ──────────────────────────────────────────────────────────────
+case "${1:-}" in
+    service)
+        case "${2:-}" in
+            start) service_start "${3:-}" ;;
+            *)     usage >&2; exit 1 ;;
+        esac
+        ;;
+    bar)
+        case "${2:-}" in
+            start)   bar_start ;;
+            stop)    bar_stop ;;
+            restart) bar_stop; bar_start ;;
+            toggle)  bar_toggle ;;
+            *)       usage >&2; exit 1 ;;
+        esac
+        ;;
+    launcher)
+        case "${2:-}" in
+            apps)    launcher_toggle drun ;;
+            windows) launcher_toggle window ;;
+            *)       usage >&2; exit 1 ;;
+        esac
+        ;;
+    notify)
+        case "${2:-}" in
+            panel)  notify_client -t ;;
+            dnd)    notify_client -d ;;
+            reload) notify_client -R && notify_client -rs ;;
+            *)      usage >&2; exit 1 ;;
+        esac
+        ;;
+    wallpaper)
+        case "${2:-}" in
+            start)      wallpaper_start ;;
+            set)        wallpaper_set "${3:-}" ;;
+            random)     wallpaper_random ;;
+            pick)       wallpaper_pick ;;
+            fetch)      wallpaper_fetch ;;
+            thumbs)     wallpaper_thumbs ;;
+            lock-image) make_lock_image "${3:-}" ;;   # internal: run in the background by `set`
+            *)          usage >&2; exit 1 ;;
+        esac
+        ;;
+    lock)
+        case "${2:-}" in
+            "")              lock_start ;;
+            idle)            lock_start idle ;;
+            info)            lock_info "${3:-}" "${4:-}" ;;
+            weather-refresh) weather_refresh "${3:-}" ;;   # internal: run in the background
+            *)               usage >&2; exit 1 ;;
+        esac
+        ;;
+    theme)
+        case "${2:-}" in
+            reload) theme_reload ;;
+            mode)   theme_set_mode "${3:-}" ;;
+            scheme) theme_set_scheme "${3:-}" ;;
+            reset)  theme_reset ;;
+            status) theme_status ;;
+            ensure) theme_ensure ;;
+            *)      usage >&2; exit 1 ;;
+        esac
+        ;;
+    screenshot)
+        case "${2:-}" in
+            region | screen | window) screenshot_take "$2" ;;
+            notify) screenshot_notify "${3:-}" ;;   # internal: run in the background
+            *)      usage >&2; exit 1 ;;
+        esac
+        ;;
+    clipboard)
+        case "${2:-}" in
+            start) clipboard_start ;;
+            pick)  clipboard_pick ;;
+            wipe)  clipboard_wipe "${3:-}" ;;
+            *)     usage >&2; exit 1 ;;
+        esac
+        ;;
+    power)
+        case "${2:-}" in
+            menu) power_menu ;;
+            *)    usage >&2; exit 1 ;;
+        esac
+        ;;
+    "" | -h | --help | help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 1
+        ;;
+esac

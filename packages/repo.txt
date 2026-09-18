@@ -1,0 +1,79 @@
+# LYNX — packages from the official Arch repositories.
+#
+# install.sh installs everything in this file in one pacman transaction, and
+# asks about packages/optional.txt separately.
+#
+# Grouped by the build piece that needs them, so when something breaks you can
+# see which package it came with. To install one section by hand:
+#   sudo pacman -Syu --needed <the names>
+#
+# Format: install.sh reads every word before a # as a package name, so
+# descriptions always go after a #.
+
+# ─── Piece 1 — Hyprland core session ──────────────────────────────────────
+hyprland                      # the compositor
+kitty                         # terminal ($terminal in the config)
+xdg-desktop-portal-hyprland   # lets apps share your screen, take screenshots and
+                              # register global shortcuts (Hyprland's own portal)
+xdg-desktop-portal-gtk        # file open/save dialogs for apps that ask the portal
+                              # for one. Hyprland's portal has no file dialog, and
+                              # Hyprland's portal preferences name gtk as the
+                              # fallback (default=hyprland;gtk)
+hyprpolkitagent               # polkit auth prompts; without it, any GUI app
+                              # asking for a password silently fails
+qt5-wayland                   # Qt apps run native Wayland instead of XWayland
+qt6-wayland
+pipewire                      # audio stack
+pipewire-pulse
+pipewire-alsa
+wireplumber                   # pipewire session manager; audio is dead without it
+wl-clipboard                  # wl-copy / wl-paste, used by lx later
+brightnessctl                 # backlight keys
+ttf-jetbrains-mono-nerd       # nerd font: the bar and rofi will need the glyphs
+noto-fonts                    # sane default text rendering
+noto-fonts-emoji              # otherwise emoji render as boxes everywhere
+
+# ─── Piece 2 — Waybar ─────────────────────────────────────────────────────
+waybar                        # the bar. Arch ships 0.15.0, which can't switch
+                              # workspaces ON CLICK under a Lua Hyprland config.
+                              # Keyboard + scroll switching work. See
+                              # docs/known-issues.md for why, and the waybar-git
+                              # alternative.
+# bin/lx also uses pgrep/pkill (procps-ng) and setsid (util-linux). Both are
+# part of Arch's `base`, so there's nothing extra to install for them.
+
+# ─── Piece 3 — Launcher ───────────────────────────────────────────────────
+rofi                          # app launcher + window switcher. Arch's rofi 2.0.0
+                              # is the native Wayland build: it replaced the old
+                              # rofi-wayland fork, so there's no fork to choose.
+papirus-icon-theme            # app icons in the launcher. Optional: without it
+                              # rofi falls back to Adwaita/gnome icons and
+                              # nothing breaks, entries just look plainer.
+
+# ─── Piece 4 — Notifications ──────────────────────────────────────────────
+swaync                        # notification popups + panel (SUPER + N). Runs as
+                              # a systemd user service, which restarts it if it
+                              # ever crashes.
+libnotify                     # notify-send, for testing:  notify-send "Hello"
+
+# ─── Piece 5 — Wallpaper, lock screen, idle ───────────────────────────────
+hyprpaper                     # wallpaper daemon (Hyprland's own)
+hyprlock                      # lock screen
+hypridle                      # locks when idle and before sleep
+imagemagick                   # wallpaper thumbnails + the resized lock image.
+                              # Without it: no picker thumbnails, and the lock
+                              # screen shows only jpg wallpapers.
+playerctl                     # media panel + buttons on the lock screen
+git                           # `lx wallpaper fetch` downloads the collections
+# Optional, in packages/optional.txt: fprintd (fingerprint unlock)
+
+# ─── Piece 6 — Theming ────────────────────────────────────────────────────
+matugen                       # generates the color palettes from your wallpaper
+
+# ─── Piece 7 — Screenshots, clipboard history, power menu ─────────────────
+grim                          # takes the screenshot
+slurp                         # lets you drag a region
+cliphist                      # clipboard history
+hyprshutdown                  # closes apps gracefully before logout/restart/shutdown
+# Optional, in packages/optional.txt: satty (an Edit button on screenshot
+# notifications) and xdg-user-dirs

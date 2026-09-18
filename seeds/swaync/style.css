@@ -1,0 +1,38 @@
+/* ~/.config/swaync/style.css
+ *
+ * ╔════════════════════════════════════════════════════════════════════════╗
+ * ║  THIS FILE IS YOURS.                                                   ║
+ * ║  LYNX created it once and will never touch it again.                   ║
+ * ╚════════════════════════════════════════════════════════════════════════╝
+ *
+ * These three imports are the only link between you and LYNX. Keep them at
+ * the top: CSS ignores an @import that comes after any rule.
+ *
+ *   1. LYNX's fallback palette  -- always there
+ *   2. the generated palette    -- only once theming exists. If the file is
+ *                                  missing, GTK logs a warning and moves on,
+ *                                  so the fallback colors stay in effect.
+ *   3. LYNX's swaync style      -- uses only palette variables
+ *
+ * GTK resolves these paths relative to THIS file, so they assume the repo is
+ * at ~/dotfiles/lynx. If you moved it, fix imports 1 and 3.
+ */
+
+@import url("../../dotfiles/lynx/config/swaync/fallback-colors.css");
+@import url("../../.cache/lynx/colors-gtk4.css");
+@import url("../../dotfiles/lynx/config/swaync/style.css");
+
+/* ─── Your overrides ───────────────────────────────────────────────────────
+ *
+ * Rules here come after LYNX's, so they win when selectors are equally
+ * specific. Use palette variables instead of hex so your changes follow the
+ * wallpaper once theming lands. For example:
+ *
+ *   :root { --border-radius: 6px; }
+ *   :root { --cc-bg: var(--surface); }                  (solid panel)
+ *   .notification-row .notification-background .notification {
+ *       background: var(--surface);
+ *   }
+ *
+ * After editing:  sh ~/dotfiles/lynx/bin/lx notify reload
+ */

@@ -1,0 +1,29 @@
+/* LYNX :: fallback palette (GTK4, for swaync)
+ *
+ * The same color contract as config/waybar/fallback-colors.css and
+ * config/rofi/fallback-colors.rasi: same roles, same values. Change one,
+ * change all three (the repo check compares them).
+ *
+ * Why a third format: swaync is a GTK4 app, and GTK4 deprecates
+ * @define-color in favour of standard CSS custom properties (GTK 4.16 and
+ * later; Arch ships 4.22). So here the colors are variables, and you use them
+ * as var(--primary), var(--on_surface), and so on. The names keep matugen's
+ * spelling, underscores included.
+ *
+ * Load order (see ~/.config/swaync/style.css): this file, then the generated
+ * palette from ~/.cache/lynx/colors-gtk4.css if it exists, then LYNX's style.
+ * The later :root definition wins, so generated colors replace these whenever
+ * that file is present.
+ */
+
+:root {
+    --surface:            #1e1e2e;  /* panel background             */
+    --surface_container:  #313244;  /* notification card background */
+    --on_surface:         #cdd6f4;  /* normal text                  */
+    --on_surface_variant: #a6adc8;  /* timestamps, dimmed text      */
+    --outline:            #45475a;  /* borders                      */
+    --primary:            #89b4fa;  /* selection, active toggles    */
+    --on_primary:         #1e1e2e;  /* text on top of the accent    */
+    --tertiary:           #f9e2af;  /* (unused by swaync so far)    */
+    --error:              #f38ba8;  /* critical notifications       */
+}

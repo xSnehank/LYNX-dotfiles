@@ -1,0 +1,57 @@
+/* LYNX :: rofi core config
+ *
+ * LYNX-owned: `git pull` overwrites this file. Your ~/.config/rofi/config.rasi
+ * imports it. Put your changes there, after the import: rasi keeps the last
+ * value it parses, so anything you set there overrides what's here.
+ *
+ * Every option here was checked against rofi 2.0.0 (man rofi, man rofi-theme,
+ * and the source), not copied from other people's dotfiles.
+ */
+
+/* ─── Palette: fallback first, then the generated one if it exists ────────
+ *
+ * `?import` (question mark) is rofi's optional import: if the file doesn't
+ * exist, rofi logs a warning and carries on. So on a fresh install, or after
+ * you clear the cache, the fallback colors simply stay in effect. Nothing has
+ * to prepare this file before rofi can start.
+ *
+ * rofi expands ~ in import paths, and resolves a bare filename relative to the
+ * file doing the importing (this one). */
+@import  "fallback-colors.rasi"
+?import  "~/.cache/lynx/colors.rasi"
+
+/* ─── Look ────────────────────────────────────────────────────────────── */
+@import  "theme.rasi"
+
+/* ─── Behaviour ───────────────────────────────────────────────────────── */
+configuration {
+    /* The two modes LYNX binds keys to:
+     *   drun   = installed apps       (lx launcher apps,    SUPER + Space)
+     *   window = open windows         (lx launcher windows, SUPER + Tab) */
+    modes: "drun,window";
+
+    /* App icons. Uses Papirus when it's installed. If it isn't, rofi falls
+     * back to the Adwaita/gnome icon themes on its own. */
+    show-icons: true;
+    icon-theme: "Papirus-Dark";
+
+    /* Just the app name. rofi's default also adds the generic name in
+     * brackets, e.g. "Firefox [Web Browser]". */
+    drun-display-format: "{name}";
+
+    /* Fuzzy matching: typing "ffx" finds Firefox. fzf-style sorting puts
+     * the closest match at the top. */
+    matching: "fuzzy";
+    sort: true;
+    sorting-method: "fzf";
+
+    /* Apps with Terminal=true in their .desktop file open through
+     * rofi-sensible-terminal, which tries $TERMINAL first. LYNX sets
+     * $TERMINAL from s.terminal (config/hypr/env.lua), so your terminal is
+     * configured in exactly one place. */
+    terminal: "rofi-sensible-terminal";
+
+    /* The prompt text shown in each mode. */
+    drun   { display-name: "Apps"; }
+    window { display-name: "Windows"; }
+}

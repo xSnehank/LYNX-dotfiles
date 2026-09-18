@@ -1,0 +1,31 @@
+// ~/.config/waybar/config.jsonc
+//
+// ╔════════════════════════════════════════════════════════════════════════╗
+// ║  THIS FILE IS YOURS.                                                   ║
+// ║  LYNX created it once and will never touch it again.                   ║
+// ╚════════════════════════════════════════════════════════════════════════╝
+//
+// It includes LYNX's core bar config. How Waybar merges the two
+// (checked in Waybar 0.15.0's src/config.cpp, not assumed):
+//
+//   - A value you set here wins over the same key in LYNX's file.
+//   - Objects merge key by key. Writing  "clock": { "format": "{:%a %H:%M}" }
+//     changes ONLY the clock format; LYNX's other clock settings stay.
+//   - Arrays are replaced whole. If you set "modules-right" here, list every
+//     module you want on the right, not just the one you're adding.
+//
+// After editing:  sh ~/dotfiles/lynx/bin/lx bar restart
+{
+    // Waybar expands $HOME in include paths. If you moved the repo, fix this.
+    "include": ["$HOME/dotfiles/lynx/config/waybar/config.jsonc"]
+
+    // ─── Your overrides ────────────────────────────────────────────────────
+    // Add a comma after the "include" line above before adding anything here.
+    //
+    // "position": "bottom",
+    // "clock": { "format": "{:%a %d %b  %H:%M}" },
+    //
+    // Live CSS reload -- convenient while ricing, off by default for a reason.
+    // Read docs/known-issues.md first:
+    // "reload_style_on_change": true
+}

@@ -1,0 +1,11 @@
+# Nothing generated should ever land in this repo. If something here starts
+# showing up in `git status`, that is a bug in the design, not a reason to
+# extend this file.
+*.bak
+*.bak-*
+*~
+.DS_Store
+Thumbs.db
+
+# Python bytecode from tests/. The only generated thing that lands here.
+__pycache__/

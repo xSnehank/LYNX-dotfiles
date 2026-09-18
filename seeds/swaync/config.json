@@ -1,0 +1,81 @@
+// ~/.config/swaync/config.json
+//
+// ╔════════════════════════════════════════════════════════════════════════╗
+// ║  THIS FILE IS YOURS, ENTIRELY.                                         ║
+// ║  LYNX created it once and will never touch it again.                   ║
+// ╚════════════════════════════════════════════════════════════════════════╝
+//
+// This is the one LYNX config that doesn't pull in a core file:
+//   - swaync has no way to include another config file, and
+//   - swaync is usually started by systemd or D-Bus, not by LYNX, and those
+//     always read exactly this path. A generated file would be ignored
+//     exactly when it matters.
+// So LYNX ships this as a starting point, and from then on it's just yours.
+// To see what a newer LYNX changed in its version:
+//   diff ~/.config/swaync/config.json ~/dotfiles/lynx/seeds/swaync/config.json
+//
+// Comments like these are fine: swaync reads this with json-glib in its
+// default, non-strict mode, which skips `//` lines. Trailing commas are NOT
+// fine.
+//
+// Every option:  man 5 swaync
+// Apply changes: sh ~/dotfiles/lynx/bin/lx notify reload
+{
+  // Lets editors that understand JSON Schema check this file as you type.
+  "$schema": "/etc/xdg/swaync/configSchema.json",
+
+  // Take colors from LYNX's stylesheet rather than your GTK theme.
+  "ignore-gtk-theme": true,
+  "cssPriority": "user",
+
+  // ─── Popups ─────────────────────────────────────────────────────────────
+  // Top-right, on the overlay layer so they show above fullscreen windows.
+  "positionX": "right",
+  "positionY": "top",
+  "layer": "overlay",
+  "notification-window-width": 420,
+
+  // Seconds before a popup hides itself. It stays in the panel afterwards.
+  // 0 = stays until you dismiss it, which is right for critical ones.
+  "timeout": 8,
+  "timeout-low": 4,
+  "timeout-critical": 0,
+
+  // ─── Panel (SUPER + N) ──────────────────────────────────────────────────
+  // On the top layer, and it respects the bar's reserved space, so it opens
+  // below the bar rather than over it.
+  "control-center-layer": "top",
+  "control-center-exclusive-zone": true,
+  "control-center-width": 440,
+  "control-center-margin-top": 10,
+  "control-center-margin-right": 10,
+  "control-center-margin-bottom": 10,
+  "fit-to-screen": true,
+
+  // ─── Behaviour ──────────────────────────────────────────────────────────
+  "keyboard-shortcuts": true,
+  "notification-grouping": true,
+  "relative-timestamps": true,
+  "image-visibility": "when-available",
+  "transition-time": 200,
+  "hide-on-clear": true,
+  "hide-on-action": true,
+  "text-empty": "No notifications",
+  "script-fail-notify": true,
+
+  // What the panel contains, top to bottom.
+  "widgets": ["title", "dnd", "notifications"],
+  "widget-config": {
+    "title": {
+      "text": "Notifications",
+      "clear-all-button": true,
+      "button-text": "Clear all"
+    },
+    "dnd": {
+      "text": "Do not disturb"
+    },
+    "notifications": {
+      "vexpand": true
+    }
+  }
+}

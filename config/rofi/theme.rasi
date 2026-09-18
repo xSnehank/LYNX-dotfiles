@@ -1,0 +1,146 @@
+/* LYNX :: rofi theme
+ *
+ * LYNX-owned. Override it from ~/.config/rofi/config.rasi.
+ *
+ * This is built ON TOP of rofi's default theme, not instead of it. rofi always
+ * loads its default theme first (man rofi-theme, "Default theme loading"), and
+ * this file only overrides what LYNX wants to look different. Any widget not
+ * styled here keeps rofi's sane default instead of breaking.
+ *
+ * THERE ARE NO HEX COLORS IN THIS FILE. Every color is a palette reference
+ * like @primary. The names are listed in fallback-colors.rasi, spelled with
+ * hyphens because rasi doesn't allow underscores in names.
+ *
+ * Widget tree (man rofi-theme, "Basic layout structure"):
+ *
+ *   window
+ *   └── mainbox
+ *       ├── inputbar ── prompt, entry
+ *       ├── message  ── textbox          (only shown when there's a message)
+ *       └── listview
+ *           └── element ── element-icon, element-text
+ */
+
+* {
+    font:             "JetBrainsMono Nerd Font 11";
+    background-color: transparent;
+    text-color:       @on-surface;
+}
+
+/* ─── Window ──────────────────────────────────────────────────────────── */
+
+window {
+    location:         center;
+    width:            640px;
+    padding:          12px;
+    background-color: @surface;
+    border:           2px;
+    border-color:     @outline;
+    border-radius:    12px;
+}
+
+/* Leaving mode-switcher out of this list hides rofi's row of mode buttons.
+ * You can still switch modes from the keyboard. */
+mainbox {
+    spacing:  10px;
+    children: [ inputbar, message, listview ];
+}
+
+/* ─── Search box ──────────────────────────────────────────────────────── */
+
+/* Just the prompt and the text field. This drops the default's ":" separator
+ * and the match counters. */
+inputbar {
+    padding:          8px 12px;
+    spacing:          10px;
+    background-color: @surface-container;
+    border-radius:    8px;
+    children:         [ prompt, entry ];
+}
+
+prompt {
+    text-color: @primary;
+}
+
+entry {
+    text-color:        @on-surface;
+    placeholder:       "Search";
+    placeholder-color: @on-surface-variant;
+    cursor:            text;
+}
+
+message {
+    padding:          8px 12px;
+    background-color: @surface-container;
+    border-radius:    8px;
+}
+
+textbox {
+    text-color: @on-surface;
+}
+
+/* ─── Results ─────────────────────────────────────────────────────────── */
+
+/* fixed-height keeps the window from jumping in size as you type. */
+listview {
+    lines:        8;
+    columns:      1;
+    fixed-height: true;
+    scrollbar:    false;
+    spacing:      4px;
+    border:       0;
+}
+
+element {
+    padding:       8px 10px;
+    spacing:       10px;
+    border-radius: 8px;
+}
+
+element normal.normal,
+element alternate.normal {
+    background-color: transparent;
+    text-color:       @on-surface;
+}
+
+element selected.normal {
+    background-color: @primary;
+    text-color:       @on-primary;
+}
+
+/* rofi marks some entries "urgent" or "active", depending on the mode. They
+ * get their own colors so they stay distinguishable. */
+element normal.urgent,
+element alternate.urgent {
+    background-color: transparent;
+    text-color:       @error;
+}
+
+element selected.urgent {
+    background-color: @error;
+    text-color:       @surface;
+}
+
+element normal.active,
+element alternate.active {
+    background-color: transparent;
+    text-color:       @tertiary;
+}
+
+element selected.active {
+    background-color: @tertiary;
+    text-color:       @surface;
+}
+
+element-icon {
+    size:             24px;
+    background-color: transparent;
+}
+
+/* highlight = how the characters matching your search are drawn. */
+element-text {
+    vertical-align:   0.5;
+    background-color: transparent;
+    text-color:       inherit;
+    highlight:        bold;
+}

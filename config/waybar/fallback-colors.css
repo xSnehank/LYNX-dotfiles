@@ -1,0 +1,28 @@
+/* LYNX :: fallback palette
+ *
+ * THIS FILE IS THE COLOR CONTRACT.
+ *
+ * LYNX's stylesheets use every name defined here, and never anything else.
+ * Whatever writes ~/.cache/lynx/colors.css -- `lx` copies this file there
+ * today, matugen will regenerate it from your wallpaper once the theming piece
+ * lands -- must define ALL of these names. Leave one out and the widgets that
+ * use it won't be colored correctly.
+ *
+ * To use a new color: add it here first, then use it in a stylesheet.
+ *
+ * The names are Material You color roles, spelled the way matugen spells
+ * them, so the theming piece can map them one-to-one.
+ *
+ * The values are Catppuccin Mocha, picked to match the fallback border colors
+ * in config/hypr/settings.lua.
+ */
+
+@define-color surface            #1e1e2e;  /* bar background              */
+@define-color surface_container  #313244;  /* module "pill" background    */
+@define-color on_surface         #cdd6f4;  /* normal text                 */
+@define-color on_surface_variant #a6adc8;  /* dimmed text                 */
+@define-color outline            #45475a;  /* borders, separators         */
+@define-color primary            #89b4fa;  /* accent: active workspace    */
+@define-color on_primary         #1e1e2e;  /* text on top of the accent   */
+@define-color tertiary           #f9e2af;  /* warnings: low battery       */
+@define-color error              #f38ba8;  /* urgent, critical, offline   */

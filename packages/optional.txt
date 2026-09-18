@@ -1,0 +1,11 @@
+# LYNX — optional packages, from the official Arch repositories.
+#
+# install.sh asks about each one separately, and the default answer is no.
+# Nothing in LYNX breaks without them.
+#
+# Same format as repo.txt: the package name, then a comment. install.sh shows
+# that comment when it asks, so keep it to one short line.
+
+satty          # an Edit button on screenshot notifications, for drawing on them
+xdg-user-dirs  # screenshots follow a Pictures folder you've moved (most people don't need it)
+fprintd        # fingerprint unlock on the lock screen (enroll with: fprintd-enroll)

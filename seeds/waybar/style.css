@@ -1,0 +1,32 @@
+/* ~/.config/waybar/style.css
+ *
+ * ╔════════════════════════════════════════════════════════════════════════╗
+ * ║  THIS FILE IS YOURS.                                                   ║
+ * ║  LYNX created it once and will never touch it again.                   ║
+ * ╚════════════════════════════════════════════════════════════════════════╝
+ *
+ * These two imports are the only link between you and LYNX. Keep them at the
+ * top: CSS ignores an @import that comes after any rule.
+ *
+ *   1. the palette  -- generated, lives in the cache
+ *   2. LYNX's style -- structure, uses only palette names
+ *
+ * GTK resolves these paths relative to THIS file, so they assume the repo is
+ * at ~/dotfiles/lynx. If you moved it, fix the second import.
+ */
+
+@import url("../../.cache/lynx/colors.css");
+@import url("../../dotfiles/lynx/config/waybar/style.css");
+
+/* ─── Your overrides ───────────────────────────────────────────────────────
+ *
+ * Rules here come after LYNX's, so they win when specificity is equal.
+ * Use palette names instead of hex, and your tweaks will follow the wallpaper
+ * once theming lands. For example:
+ *
+ *   #clock          { color: @primary; }
+ *   window#waybar   { background: @surface; }      (solid, no transparency)
+ *   *               { font-size: 14px; }
+ *
+ * After editing:  sh ~/dotfiles/lynx/bin/lx bar restart
+ */

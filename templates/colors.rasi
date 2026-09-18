@@ -1,0 +1,18 @@
+/* LYNX :: generated palette (rofi)
+ *
+ * Rendered by matugen from your wallpaper (lx theme reload). Don't edit this
+ * file: it's replaced every time the colors change. What each role is for is
+ * explained in config/rofi/fallback-colors.rasi.
+ */
+
+* {
+    surface:            {{colors.surface.default.hex}};
+    surface-container:  {{colors.surface_container.default.hex}};
+    on-surface:         {{colors.on_surface.default.hex}};
+    on-surface-variant: {{colors.on_surface_variant.default.hex}};
+    outline:            {{colors.outline.default.hex}};
+    primary:            {{colors.primary.default.hex}};
+    on-primary:         {{colors.on_primary.default.hex}};
+    tertiary:           {{colors.tertiary.default.hex}};
+    error:              {{colors.error.default.hex}};
+}

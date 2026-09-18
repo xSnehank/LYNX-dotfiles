@@ -1,0 +1,140 @@
+// LYNX :: Waybar core config
+//
+// LYNX-owned: `git pull` overwrites this file. Override it from
+// ~/.config/waybar/config.jsonc, which includes this one. Anything you set
+// there wins; docs/overrides.md explains exactly how the merge works.
+//
+// Every option here was checked against Waybar 0.15.0's man pages or source.
+// Per-module reference:  man waybar-<module>   e.g.  man waybar-clock
+//
+// Icons are Nerd Font glyphs, looked up by name in Nerd Fonts' glyphnames.json.
+// If one shows up as an empty box, the font is missing:
+//   fc-list | grep -i "JetBrainsMono Nerd"
+{
+    // ─── The bar itself ───────────────────────────────────────────────────
+    "layer": "top",
+    "position": "top",
+    "height": 34,
+    "spacing": 6,
+
+    // A small gap on three sides so the bar floats instead of touching the edges.
+    "margin-top": 6,
+    "margin-left": 10,
+    "margin-right": 10,
+
+    // Live CSS reload stays off on purpose. Why: docs/known-issues.md
+    "reload_style_on_change": false,
+
+    "modules-left":   ["hyprland/workspaces", "hyprland/window"],
+    "modules-center": ["clock"],
+    "modules-right":  ["tray", "wireplumber", "network", "battery", "custom/notification", "custom/power"],
+
+    // ─── Workspaces ───────────────────────────────────────────────────────
+    "hyprland/workspaces": {
+        "format": "{name}",
+
+        // Scroll over the module to switch workspaces.
+        //
+        // Written in Hyprland's Lua dispatch syntax on purpose. Waybar 0.15.0's
+        // built-in CLICK handling still sends the old syntax, which fails under
+        // a Lua config. Scroll goes through Waybar's generic handler instead,
+        // so this works. Details: docs/known-issues.md
+        "on-scroll-up":   "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
+        "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'"
+    },
+
+    // ─── Focused window title ─────────────────────────────────────────────
+    "hyprland/window": {
+        "format": "{title}",
+        "max-length": 60,
+        "separate-outputs": true
+    },
+
+    // ─── Clock ────────────────────────────────────────────────────────────
+    // Click to switch between the two formats. Hover for a calendar.
+    "clock": {
+        "format": "{:%H:%M}",
+        "format-alt": "{:%a %d %b  %H:%M}",
+        "tooltip-format": "<tt>{calendar}</tt>"
+    },
+
+    // ─── System tray ──────────────────────────────────────────────────────
+    "tray": {
+        "icon-size": 16,
+        "spacing": 8
+    },
+
+    // ─── Audio (PipeWire via WirePlumber) ─────────────────────────────────
+    // Scroll to change volume, click to mute.
+    "wireplumber": {
+        "format": "{icon} {volume}%",
+        "format-muted": "󰝟 muted",
+        "format-icons": ["󰕿", "󰖀", "󰕾"],
+        "scroll-step": 5,
+        "max-volume": 100,
+        "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+        "tooltip-format": "{node_name}: {volume}%"
+    },
+
+    // ─── Network ──────────────────────────────────────────────────────────
+    // On wifi, the icon is picked from format-icons by signal strength.
+    "network": {
+        "format-wifi": "{icon} {essid}",
+        "format-icons": ["󰤟", "󰤢", "󰤥", "󰤨"],
+        "format-ethernet": "󰈀 wired",
+        "format-linked": "󰈀 no IP",
+        "format-disconnected": "󰤭 offline",
+        "tooltip-format-wifi": "{essid} ({signalStrength}%)\n{ipaddr}/{cidr}",
+        "tooltip-format-ethernet": "{ifname}\n{ipaddr}/{cidr}",
+        "tooltip-format-disconnected": "No connection"
+    },
+
+    // ─── Battery ──────────────────────────────────────────────────────────
+    // Safe on a desktop: a module that fails to start is skipped with a
+    // warning and can't take the rest of the bar down (src/bar.cpp).
+    "battery": {
+        "states": { "warning": 25, "critical": 10 },
+        "format": "{icon} {capacity}%",
+        "format-charging": "󰂄 {capacity}%",
+        "format-plugged": "󰚥 {capacity}%",
+        "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰂂", "󰁹"]
+    },
+
+    // ─── Notifications (swaync) ───────────────────────────────────────────
+    // Click to open the notification panel, right-click for Do Not Disturb.
+    //
+    // swaync-client prints one JSON line whenever something changes. Its
+    // "alt" field names the current state and picks the icon below; the same
+    // state becomes a CSS class for style.css. The state names come from
+    // swaync's source (src/client.vala), not from guesswork.
+    //
+    // If swaync isn't installed, exec-if fails and the module stays hidden.
+    "custom/notification": {
+        "exec": "swaync-client -swb",
+        "exec-if": "command -v swaync-client",
+        "return-type": "json",
+        "escape": true,
+        "format": "{icon}",
+        "format-icons": {
+            "none":                       "󰂜",
+            "notification":               "󱅫",
+            "dnd-none":                   "󰪓",
+            "dnd-notification":           "󰂠",
+            "inhibited-none":             "󱏨",
+            "inhibited-notification":     "󱏧",
+            "dnd-inhibited-none":         "󰪓",
+            "dnd-inhibited-notification": "󰂠"
+        },
+        "on-click": "swaync-client -t -sw",
+        "on-click-right": "swaync-client -d -sw"
+    },
+
+    // ─── Power ────────────────────────────────────────────────────────────
+    // A static button: click for the power menu, right-click to lock.
+    "custom/power": {
+        "format": "󰐥",
+        "tooltip-format": "Power menu  ·  right-click to lock",
+        "on-click": "sh ~/dotfiles/lynx/bin/lx power menu",
+        "on-click-right": "sh ~/dotfiles/lynx/bin/lx lock"
+    }
+}

@@ -1,0 +1,60 @@
+/* LYNX :: swaync core stylesheet
+ *
+ * LYNX-owned: `git pull` overwrites this file. Put your changes in
+ * ~/.config/swaync/style.css instead, after its imports.
+ *
+ * HOW THIS FITS TOGETHER
+ * swaync always loads its own packaged stylesheet first, then yours
+ * (~/.config/swaync/style.css) on top (swaync src/functions.vala, load_css).
+ * Yours imports the palette and then this file. So this is a small set of
+ * overrides on top of swaync's default look, not a full theme: anything not
+ * mentioned here keeps swaync's default.
+ *
+ * swaync's default stylesheet is built around CSS variables (--text-color,
+ * --noti-bg-hover, ...). Most of LYNX's work is pointing those variables at
+ * palette colors, which recolors every widget that uses them.
+ *
+ * THERE ARE NO HEX COLORS IN THIS FILE. Colors are palette variables like
+ * var(--primary); the full list is in fallback-colors.css.
+ *
+ * This is GTK4 CSS. It supports CSS variables and color-mix(); the older
+ * @define-color / alpha() / mix() extensions are deprecated in GTK4.
+ */
+
+/* ─── swaync's variables, pointed at the palette ────────────────────────── */
+
+:root {
+    /* Panel background: very slightly translucent, so Hyprland's blur rule
+     * for swaync (config/hypr/rules.lua) has something to show. */
+    --cc-bg: color-mix(in srgb, var(--surface) 92%, transparent);
+
+    --noti-border-color:   var(--outline);
+    --noti-bg-darker:      var(--surface);
+    --noti-bg-hover:       color-mix(in srgb, var(--primary) 15%, var(--surface_container));
+    --noti-bg-focus:       color-mix(in srgb, var(--primary) 25%, transparent);
+    --noti-close-bg:       var(--outline);
+    --noti-close-bg-hover: color-mix(in srgb, var(--error) 60%, var(--outline));
+
+    --text-color:          var(--on_surface);
+    --text-color-disabled: var(--on_surface_variant);
+
+    /* Switches and selected buttons, e.g. the Do Not Disturb toggle. */
+    --bg-selected: var(--primary);
+
+    --border-radius: 12px;
+}
+
+/* ─── Notification cards ────────────────────────────────────────────────── */
+
+/* swaync paints the card with rgba(var(--noti-bg), alpha), where --noti-bg is
+ * a bare "r, g, b" triple. A palette color can't be turned into that format
+ * in CSS, so the card background is set directly instead. */
+.notification-row .notification-background .notification {
+    background: color-mix(in srgb, var(--surface_container) 95%, transparent);
+}
+
+/* Critical notifications get an error-colored border, so they stand out even
+ * in a long list. */
+.notification-row .notification-background .notification.critical {
+    border-color: var(--error);
+}
